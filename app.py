@@ -24,17 +24,28 @@ def get_clipboard_text() -> str:
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         
+        CF_TEXT = 1
         CF_UNICODETEXT = 13
         
         if user32.OpenClipboard(None):
             try:
+                # Try Unicode text first
                 handle = user32.GetClipboardData(CF_UNICODETEXT)
                 if handle:
                     ptr = kernel32.GlobalLock(handle)
                     if ptr:
                         try:
-                            text = ctypes.wstring_at(ptr)
-                            return text
+                            return ctypes.wstring_at(ptr)
+                        finally:
+                            kernel32.GlobalUnlock(handle)
+                
+                # Try standard ASCII text fallback
+                handle = user32.GetClipboardData(CF_TEXT)
+                if handle:
+                    ptr = kernel32.GlobalLock(handle)
+                    if ptr:
+                        try:
+                            return ctypes.string_at(ptr).decode("ansi", errors="ignore")
                         finally:
                             kernel32.GlobalUnlock(handle)
             finally:
@@ -43,11 +54,15 @@ def get_clipboard_text() -> str:
         pass
 
     try:
-        import tkinter as tk
-        root = tk.Tk()
-        root.withdraw()
-        text = root.clipboard_get()
-        return text
+        import subprocess
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+            capture_output=True,
+            text=True,
+            creationflags=0x08000000 # CREATE_NO_WINDOW
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
     except Exception:
         pass
 
@@ -86,13 +101,16 @@ def set_clipboard_text(text: str) -> bool:
         pass
 
     try:
-        import tkinter as tk
-        root = tk.Tk()
-        root.withdraw()
-        root.clipboard_clear()
-        root.clipboard_append(text)
-        root.update()
-        return True
+        import subprocess
+        p = subprocess.Popen(
+            ["powershell", "-NoProfile", "-Command", "Set-Clipboard"],
+            stdin=subprocess.PIPE,
+            text=True,
+            creationflags=0x08000000 # CREATE_NO_WINDOW
+        )
+        p.communicate(input=text)
+        if p.returncode == 0:
+            return True
     except Exception:
         pass
 
@@ -143,6 +161,7 @@ def mask_key(provider: str, key: str) -> str:
 
 class ModelCheckApp(App):
     TITLE = "=== WHAT MODEL DOES MY API KEY SUPPORT ==="
+    show_command_palette = False
     CSS = """
     Screen {
         background: #0f141c;
@@ -181,8 +200,9 @@ class ModelCheckApp(App):
     .display-panel {
         background: #161b22;
         border: round #30363d;
-        padding: 1 2;
+        padding: 0 2;
         height: 100%;
+        overflow: hidden;
     }
 
     .panel-title {
@@ -245,16 +265,36 @@ class ModelCheckApp(App):
         background: #2ea043;
     }
 
-    .status-badge {
-        background: #21262d;
-        border: round #30363d;
-        padding: 1 2;
+    #info-panel {
+        height: auto;
         margin-bottom: 1;
+        background: #161b22;
+        border: none;
+        padding: 0;
     }
 
-    .progress-bar-container {
-        margin-top: 1;
-        margin-bottom: 1;
+    .info-row {
+        height: 1;
+        margin-bottom: 0;
+    }
+
+    .info-row Label {
+        width: 1fr;
+    }
+
+    #progress-container {
+        height: 1;
+        margin-top: 0;
+        margin-bottom: 0;
+    }
+
+    #progress-container Label {
+        width: 35;
+        text-style: bold;
+    }
+
+    #progress-bar {
+        width: 1fr;
     }
 
     DataTable {
@@ -309,42 +349,28 @@ class ModelCheckApp(App):
 
     #lbl-execution-status {
         text-style: bold;
-        background: #21262d;
         color: #8b949e;
-        border: solid #30363d;
-        padding: 0 1;
-        width: 100%;
-        text-align: center;
         margin-bottom: 1;
-    }
-    #lbl-execution-status.status-testing {
-        color: #f0883e;
-        background: #2b221a;
-        border: solid #f0883e;
-    }
-    #lbl-execution-status.status-complete {
-        color: #56d364;
-        background: #1b2d20;
-        border: solid #56d364;
     }
 
     #results-table {
-        height: 7fr;
-        margin-top: 1;
-        margin-bottom: 1;
+        height: 1fr;
+        margin-top: 0;
+        margin-bottom: 0;
     }
 
     #details-viewer-container {
-        height: 3fr;
+        height: 9;
         background: #0d1117;
         border: round #30363d;
-        padding: 1 2;
+        padding: 0 1;
+        margin-bottom: 0;
     }
 
     #details-viewer-title {
         text-style: bold;
         color: #58a6ff;
-        margin-bottom: 1;
+        margin-bottom: 0;
         border-bottom: solid #30363d;
         padding-bottom: 0;
     }
@@ -352,7 +378,7 @@ class ModelCheckApp(App):
     #details-viewer {
         color: #c9d1d9;
         overflow: auto scroll;
-        height: 100%;
+        height: 5;
     }
 
     #action-buttons-container {
@@ -367,7 +393,7 @@ class ModelCheckApp(App):
         color: #58a6ff;
         border: solid #30363d;
         height: 3;
-        margin-right: 1;
+        margin: 0 1 0 0;
         text-style: bold;
     }
     #btn-copy-active:hover {
@@ -380,6 +406,7 @@ class ModelCheckApp(App):
         color: #58a6ff;
         border: solid #30363d;
         height: 3;
+        margin: 0;
         text-style: bold;
     }
     #btn-export-markdown:hover {
@@ -455,25 +482,27 @@ class ModelCheckApp(App):
             with Vertical(classes="display-panel"):
                 yield Label("[ DIAGNOSTICS & RESULTS ]", classes="panel-title")
                 
-                # Dynamic Info Panel
-                with Vertical(classes="status-badge", id="info-panel"):
-                    self.status_indicator = Label("STATUS: IDLE", id="lbl-execution-status")
-                    yield self.status_indicator
-                    yield Label("Provider: Not Checked", id="lbl-detected-provider")
-                    yield Label("Key Status: Waiting for input", id="lbl-key-status")
-                    yield Label("Active Models: 0", id="lbl-active-models-count")
-                
-                # Progress Bar
-                with Vertical(classes="progress-bar-container", id="progress-container"):
-                    self.progress_label = Label("Testing progress: Idle")
-                    yield self.progress_label
-                    self.progress_bar = ProgressBar(total=100, show_eta=False, show_percentage=True, id="progress-bar")
-                    yield self.progress_bar
-                    
                 # Results Table
                 self.results_table = DataTable(id="results-table")
                 yield self.results_table
 
+                # Progress Bar
+                with Horizontal(id="progress-container"):
+                    self.progress_label = Label("Testing progress: Idle")
+                    yield self.progress_label
+                    self.progress_bar = ProgressBar(total=100, show_eta=False, show_percentage=True, id="progress-bar")
+                    yield self.progress_bar
+
+                # Dynamic Info Panel
+                with Vertical(id="info-panel"):
+                    with Horizontal(classes="info-row"):
+                        self.status_indicator = Label("STATUS: [bold #8b949e]IDLE[/bold #8b949e]", id="lbl-execution-status")
+                        yield self.status_indicator
+                        yield Label("Active Models: 0", id="lbl-active-models-count")
+                    with Horizontal(classes="info-row"):
+                        yield Label("Provider: Not Checked", id="lbl-detected-provider")
+                        yield Label("Key Status: Waiting for input", id="lbl-key-status")
+                
                 # Details Panel
                 with Vertical(id="details-viewer-container"):
                     yield Label("[ SELECTED MODEL ERROR/DETAILS ]", id="details-viewer-title")
@@ -491,6 +520,7 @@ class ModelCheckApp(App):
         """Initialize UI elements after loading screen."""
         self.results_table.add_columns("Model Name", "Status", "Code", "Latency (ms)", "Details / API Error Messages")
         self.results_table.zebra_stripes = True
+        self.results_table.cursor_type = "row"
         self.refresh_history()
 
     def refresh_history(self) -> None:
@@ -570,8 +600,11 @@ class ModelCheckApp(App):
 
     def update_details_from_row(self, row_key) -> None:
         try:
-            row = self.results_table.get_row(row_key)
-            model_name = str(row[0])
+            if hasattr(row_key, "value"):
+                model_name = str(row_key.value)
+            else:
+                model_name = str(row_key)
+                
             if model_name in self.check_results:
                 res = self.check_results[model_name]
                 status_text = res.status
@@ -645,12 +678,11 @@ class ModelCheckApp(App):
             return
         self.key_input.value = ""
         self.provider_select.value = "Auto-Detect"
-        self.history_select.value = None
+        self.history_select.clear()
         self.query_one("#lbl-detected-provider", Label).update("Provider: Not Checked")
         self.query_one("#lbl-key-status", Label).update("Key Status: Waiting for input")
         self.query_one("#lbl-active-models-count", Label).update("Active Models: 0")
-        self.status_indicator.update("STATUS: IDLE")
-        self.status_indicator.set_classes("")
+        self.status_indicator.update("STATUS: [bold #8b949e]IDLE[/bold #8b949e]")
         self.progress_label.update("Testing progress: Idle")
         self.progress_bar.progress = 0
         self.results_table.clear()
@@ -673,8 +705,7 @@ class ModelCheckApp(App):
         self.details_viewer.update("Testing models...")
         
         # Set status to TESTING
-        self.status_indicator.update("STATUS: TESTING")
-        self.status_indicator.set_classes("status-testing")
+        self.status_indicator.update("STATUS: [bold #f0883e]TESTING...[/bold #f0883e]")
         
         # Determine provider
         provider = self.provider_select.value
@@ -682,8 +713,7 @@ class ModelCheckApp(App):
             detected, status_msg = detect_provider(key_val)
             if detected in ["Unknown", "Unsupported"]:
                 self.query_one("#lbl-key-status", Label).update("[red]Could not auto-detect provider. Please choose a provider manually.[/red]")
-                self.status_indicator.update("STATUS: COMPLETE")
-                self.status_indicator.set_classes("status-complete")
+                self.status_indicator.update("STATUS: [bold #56d364]COMPLETE[/bold #56d364]")
                 self.testing_in_progress = False
                 return
             provider = detected
@@ -697,8 +727,7 @@ class ModelCheckApp(App):
         is_valid, validation_msg = await checker.check_key_validity_early()
         if not is_valid:
             self.query_one("#lbl-key-status", Label).update(f"[red]Failed Pre-validation: {validation_msg}[/red]")
-            self.status_indicator.update("STATUS: COMPLETE")
-            self.status_indicator.set_classes("status-complete")
+            self.status_indicator.update("STATUS: [bold #56d364]COMPLETE[/bold #56d364]")
             self.testing_in_progress = False
             return
             
@@ -713,8 +742,7 @@ class ModelCheckApp(App):
         models = await checker.get_available_models()
         if not models:
             self.query_one("#lbl-key-status", Label).update("[red]No models found to test for this provider.[/red]")
-            self.status_indicator.update("STATUS: COMPLETE")
-            self.status_indicator.set_classes("status-complete")
+            self.status_indicator.update("STATUS: [bold #56d364]COMPLETE[/bold #56d364]")
             self.testing_in_progress = False
             return
             
@@ -785,8 +813,7 @@ class ModelCheckApp(App):
         self.query_one("#lbl-key-status", Label).update(f"[green]Verification Finished. {active_count} active models.[/green]")
         
         # Set status to COMPLETE
-        self.status_indicator.update("STATUS: COMPLETE")
-        self.status_indicator.set_classes("status-complete")
+        self.status_indicator.update("STATUS: [bold #56d364]COMPLETE[/bold #56d364]")
         
         self.testing_in_progress = False
         

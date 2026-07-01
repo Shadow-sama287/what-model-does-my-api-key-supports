@@ -16,13 +16,21 @@ class ModelCheckResult:
 # Curated lists of popular/current models for fallback testing
 PROVIDER_MODELS = {
     "Gemini": [
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
         "gemini-2.5-flash",
         "gemini-2.5-pro",
+        "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite-preview-02-05",
         "gemini-2.0-pro-exp-02-05",
         "gemini-1.5-flash",
         "gemini-1.5-pro",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest",
+        "gemma-4-31b-it",
+        "gemini-robotics-er-1.6-preview",
         "gemini-1.0-pro"
     ],
     "OpenAI": [
