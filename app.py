@@ -178,6 +178,10 @@ class ModelCheckApp(App):
         text-style: bold;
     }
 
+    HeaderIcon {
+        display: none;
+    }
+
     Footer {
         background: #131924;
         color: #8b949e;

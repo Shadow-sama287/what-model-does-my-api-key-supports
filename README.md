@@ -49,7 +49,10 @@ run.bat
 .\run.ps1
 ```
 
-*Note: The script will automatically check for Python, set up a virtual environment (`.venv`), install all required dependencies from `requirements.txt`, and start the app.*
+### ⚡ Fast Startup & Desktop Shortcut
+- **First Run**: The script will automatically verify Python, set up a local virtual environment (`.venv`), install dependencies, and **automatically create a "Model Checker" shortcut on your Desktop**.
+- **Subsequent Runs**: Double-clicking `run.bat` (or running `.\run.ps1`) bypasses all environment checks and launches the TUI instantly (under 100ms).
+- **Desktop Launch**: You can simply double-click the **Model Checker** shortcut icon on your Windows Desktop to open and use the TUI application directly!
 
 ---
 

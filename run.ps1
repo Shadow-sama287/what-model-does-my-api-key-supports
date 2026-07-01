@@ -1,3 +1,26 @@
+# If .venv exists, launch the application directly (fast startup) and ensure Desktop shortcut exists
+if (Test-Path -Path ".venv") {
+    $shortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "Model Checker.lnk"
+    if (-not (Test-Path -Path $shortcutPath)) {
+        Write-Host "[INFO] Creating Desktop shortcut..." -ForegroundColor Green
+        try {
+            $ws = New-Object -ComObject WScript.Shell
+            $s = $ws.CreateShortcut($shortcutPath)
+            $s.TargetPath = "$PSScriptRoot\.venv\Scripts\python.exe"
+            $s.Arguments = "`"$PSScriptRoot\app.py`""
+            $s.WorkingDirectory = $PSScriptRoot
+            $s.Description = "Launch API Key Model Checker"
+            $s.Save()
+            Write-Host "[SUCCESS] Desktop shortcut created!" -ForegroundColor Green
+        } catch {
+            Write-Host "[WARNING] Could not create Desktop shortcut." -ForegroundColor Yellow
+        }
+    }
+    & .venv\Scripts\Activate.ps1
+    python app.py
+    exit 0
+}
+
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host "  What model does my API key support (wmd-my-API-ks)" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
