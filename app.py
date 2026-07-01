@@ -1,7 +1,8 @@
 import asyncio
 import json
 import os
-from typing import List, Dict, Tuple, Optional
+import time
+from typing import List, Dict, Tuple, Optional, Any
 import httpx
 
 from textual.app import App, ComposeResult
@@ -52,6 +53,51 @@ def get_clipboard_text() -> str:
 
     return ""
 
+def set_clipboard_text(text: str) -> bool:
+    """Writes text to Windows or fallback system clipboard."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        
+        CF_UNICODETEXT = 13
+        GMEM_MOVEABLE = 0x0002
+        
+        text_utf16 = text.encode("utf-16le") + b"\x00\x00"
+        
+        if user32.OpenClipboard(None):
+            try:
+                user32.EmptyClipboard()
+                h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(text_utf16))
+                if h_mem:
+                    ptr = kernel32.GlobalLock(h_mem)
+                    if ptr:
+                        try:
+                            ctypes.memmove(ptr, text_utf16, len(text_utf16))
+                        finally:
+                            kernel32.GlobalUnlock(h_mem)
+                        user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+                        return True
+            finally:
+                user32.CloseClipboard()
+    except Exception:
+        pass
+
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()
+        return True
+    except Exception:
+        pass
+
+    return False
+
 def load_keys_history() -> List[Dict[str, str]]:
     """Loads keys from local JSON file."""
     if not os.path.exists(HISTORY_FILE):
@@ -96,7 +142,7 @@ def mask_key(provider: str, key: str) -> str:
 
 
 class ModelCheckApp(App):
-    TITLE = "★ WHAT MODEL DOES MY API KEY SUPPORT ★"
+    TITLE = "=== WHAT MODEL DOES MY API KEY SUPPORT ==="
     CSS = """
     Screen {
         background: #0f141c;
@@ -110,7 +156,7 @@ class ModelCheckApp(App):
         height: 3;
         border-bottom: double #30363d;
         content-align: center middle;
-        text-style: bold reverse;
+        text-style: bold;
     }
 
     Footer {
@@ -260,18 +306,100 @@ class ModelCheckApp(App):
     #btn-clipboard-paste:hover {
         background: #30363d;
     }
+
+    #lbl-execution-status {
+        text-style: bold;
+        background: #21262d;
+        color: #8b949e;
+        border: solid #30363d;
+        padding: 0 1;
+        width: 100%;
+        text-align: center;
+        margin-bottom: 1;
+    }
+    #lbl-execution-status.status-testing {
+        color: #f0883e;
+        background: #2b221a;
+        border: solid #f0883e;
+    }
+    #lbl-execution-status.status-complete {
+        color: #56d364;
+        background: #1b2d20;
+        border: solid #56d364;
+    }
+
+    #results-table {
+        height: 7fr;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
+    #details-viewer-container {
+        height: 3fr;
+        background: #0d1117;
+        border: round #30363d;
+        padding: 1 2;
+    }
+
+    #details-viewer-title {
+        text-style: bold;
+        color: #58a6ff;
+        margin-bottom: 1;
+        border-bottom: solid #30363d;
+        padding-bottom: 0;
+    }
+
+    #details-viewer {
+        color: #c9d1d9;
+        overflow: auto scroll;
+        height: 100%;
+    }
+
+    #action-buttons-container {
+        height: auto;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+
+    #btn-copy-active {
+        width: 1fr;
+        background: #21262d;
+        color: #58a6ff;
+        border: solid #30363d;
+        height: 3;
+        margin-right: 1;
+        text-style: bold;
+    }
+    #btn-copy-active:hover {
+        background: #30363d;
+    }
+
+    #btn-export-markdown {
+        width: 1fr;
+        background: #21262d;
+        color: #58a6ff;
+        border: solid #30363d;
+        height: 3;
+        text-style: bold;
+    }
+    #btn-export-markdown:hover {
+        background: #30363d;
+    }
     """
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+t", "test_key", "Test Key", show=True),
         Binding("ctrl+r", "reset", "Reset UI", show=True),
+        Binding("ctrl+c", "copy_active", "Copy Active", show=True),
+        Binding("ctrl+e", "export_markdown", "Export MD", show=True),
     ]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.saved_keys: List[Dict[str, str]] = []
         self.testing_in_progress = False
+        self.check_results: Dict[str, Any] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -279,7 +407,7 @@ class ModelCheckApp(App):
         with Grid(classes="main-grid"):
             # Left Panel: Controls
             with Vertical(classes="control-panel"):
-                yield Label("⚙️ MAIN CONTROLS", classes="panel-title")
+                yield Label("[ MAIN CONTROLS ]", classes="panel-title")
                 
                 yield Label("Saved Key History")
                 self.history_select = Select(
@@ -325,10 +453,12 @@ class ModelCheckApp(App):
                 
             # Right Panel: Display and Results
             with Vertical(classes="display-panel"):
-                yield Label("📊 DIAGNOSTICS & RESULTS", classes="panel-title")
+                yield Label("[ DIAGNOSTICS & RESULTS ]", classes="panel-title")
                 
                 # Dynamic Info Panel
                 with Vertical(classes="status-badge", id="info-panel"):
+                    self.status_indicator = Label("STATUS: IDLE", id="lbl-execution-status")
+                    yield self.status_indicator
                     yield Label("Provider: Not Checked", id="lbl-detected-provider")
                     yield Label("Key Status: Waiting for input", id="lbl-key-status")
                     yield Label("Active Models: 0", id="lbl-active-models-count")
@@ -343,6 +473,17 @@ class ModelCheckApp(App):
                 # Results Table
                 self.results_table = DataTable(id="results-table")
                 yield self.results_table
+
+                # Details Panel
+                with Vertical(id="details-viewer-container"):
+                    yield Label("[ SELECTED MODEL ERROR/DETAILS ]", id="details-viewer-title")
+                    self.details_viewer = Static("Highlight or select a model row above to view full details.", id="details-viewer")
+                    yield self.details_viewer
+
+                # Copy/Export Buttons
+                with Horizontal(id="action-buttons-container"):
+                    yield Button("Copy Active List", id="btn-copy-active")
+                    yield Button("Export Report", id="btn-export-markdown")
 
         yield Footer()
 
@@ -365,7 +506,7 @@ class ModelCheckApp(App):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handles selecting a key from history."""
-        if event.select.id == "history-select" and event.value is not None:
+        if event.select.id == "history-select" and isinstance(event.value, str):
             # Set the full key value into input
             self.key_input.value = event.value
             # Pre-detect the provider for the user
@@ -414,8 +555,90 @@ class ModelCheckApp(App):
                 self.notify("Key pasted from clipboard!", severity="info", timeout=2)
             else:
                 self.notify("Clipboard is empty or inaccessible.", severity="warning", timeout=2)
+        elif event.button.id == "btn-copy-active":
+            self.action_copy_active()
+        elif event.button.id == "btn-export-markdown":
+            self.action_export_markdown()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Dynamically displays details of the currently highlighted row."""
+        self.update_details_from_row(event.row_key)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handles row selection/click."""
+        self.update_details_from_row(event.row_key)
+
+    def update_details_from_row(self, row_key) -> None:
+        try:
+            row = self.results_table.get_row(row_key)
+            model_name = str(row[0])
+            if model_name in self.check_results:
+                res = self.check_results[model_name]
+                status_text = res.status
+                code_str = str(res.status_code) if res.status_code else "N/A"
+                latency_str = f"{res.latency_ms:.1f} ms" if res.latency_ms > 0 else "N/A"
+                error_msg = res.error_message or "No error details available."
+                
+                details_content = (
+                    f"[bold cyan]Model:[/bold cyan] {res.model_name}\n"
+                    f"[bold cyan]Status:[/bold cyan] {status_text} (Code: {code_str})\n"
+                    f"[bold cyan]Latency:[/bold cyan] {latency_str}\n"
+                    f"[bold cyan]Full API Message/Details:[/bold cyan]\n"
+                    f"{error_msg}"
+                )
+                self.details_viewer.update(details_content)
+        except Exception as e:
+            self.details_viewer.update(f"Error loading row details: {str(e)}")
 
     # --- Actions ---
+    def action_copy_active(self) -> None:
+        """Action handler to copy active models."""
+        active_models = [m.model_name for m in self.check_results.values() if m.status == "Active"]
+        if not active_models:
+            self.notify("No active models to copy.", severity="warning", timeout=2)
+            return
+        
+        bullet_list = "\n".join(f"- {name}" for name in active_models)
+        clipboard_content = f"My API key supports the following active models:\n{bullet_list}"
+        
+        if set_clipboard_text(clipboard_content):
+            self.notify(f"Copied {len(active_models)} active models to clipboard!", severity="info", timeout=2)
+        else:
+            self.notify("Failed to copy to clipboard.", severity="error", timeout=2)
+
+    def action_export_markdown(self) -> None:
+        """Action handler to export report to markdown."""
+        if not self.check_results:
+            self.notify("No results to export. Run a test first.", severity="warning", timeout=2)
+            return
+        
+        try:
+            markdown_lines = [
+                "# API Key Support Report",
+                "",
+                f"- **Provider**: {self.provider_select.value}",
+                f"- **Tested At**: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+                "",
+                "| Model Name | Status | Status Code | Latency | Details / API Error |",
+                "|---|---|---|---|---|",
+            ]
+            for res in self.check_results.values():
+                code_str = str(res.status_code) if res.status_code else "N/A"
+                latency_str = f"{res.latency_ms:.1f}ms" if res.latency_ms > 0 else "N/A"
+                err_cleaned = (res.error_message or "Successfully responded").replace("|", "\\|").replace("\n", " ")
+                markdown_lines.append(
+                    f"| {res.model_name} | {res.status} | {code_str} | {latency_str} | {err_cleaned} |"
+                )
+            
+            report_content = "\n".join(markdown_lines)
+            
+            with open("wmd_results.md", "w") as f:
+                f.write(report_content)
+            
+            self.notify("Results exported to wmd_results.md!", severity="info", timeout=3)
+        except Exception as e:
+            self.notify(f"Export failed: {str(e)}", severity="error", timeout=3)
+
     def action_reset(self) -> None:
         """Resets the UI states."""
         if self.testing_in_progress:
@@ -426,9 +649,13 @@ class ModelCheckApp(App):
         self.query_one("#lbl-detected-provider", Label).update("Provider: Not Checked")
         self.query_one("#lbl-key-status", Label).update("Key Status: Waiting for input")
         self.query_one("#lbl-active-models-count", Label).update("Active Models: 0")
+        self.status_indicator.update("STATUS: IDLE")
+        self.status_indicator.set_classes("")
         self.progress_label.update("Testing progress: Idle")
         self.progress_bar.progress = 0
         self.results_table.clear()
+        self.check_results = {}
+        self.details_viewer.update("Highlight or select a model row above to view full details.")
 
     async def action_test_key(self) -> None:
         """Validates and tests the API key against all models."""
@@ -442,6 +669,12 @@ class ModelCheckApp(App):
 
         self.testing_in_progress = True
         self.results_table.clear()
+        self.check_results = {}
+        self.details_viewer.update("Testing models...")
+        
+        # Set status to TESTING
+        self.status_indicator.update("STATUS: TESTING")
+        self.status_indicator.set_classes("status-testing")
         
         # Determine provider
         provider = self.provider_select.value
@@ -449,6 +682,8 @@ class ModelCheckApp(App):
             detected, status_msg = detect_provider(key_val)
             if detected in ["Unknown", "Unsupported"]:
                 self.query_one("#lbl-key-status", Label).update("[red]Could not auto-detect provider. Please choose a provider manually.[/red]")
+                self.status_indicator.update("STATUS: COMPLETE")
+                self.status_indicator.set_classes("status-complete")
                 self.testing_in_progress = False
                 return
             provider = detected
@@ -462,6 +697,8 @@ class ModelCheckApp(App):
         is_valid, validation_msg = await checker.check_key_validity_early()
         if not is_valid:
             self.query_one("#lbl-key-status", Label).update(f"[red]Failed Pre-validation: {validation_msg}[/red]")
+            self.status_indicator.update("STATUS: COMPLETE")
+            self.status_indicator.set_classes("status-complete")
             self.testing_in_progress = False
             return
             
@@ -476,6 +713,8 @@ class ModelCheckApp(App):
         models = await checker.get_available_models()
         if not models:
             self.query_one("#lbl-key-status", Label).update("[red]No models found to test for this provider.[/red]")
+            self.status_indicator.update("STATUS: COMPLETE")
+            self.status_indicator.set_classes("status-complete")
             self.testing_in_progress = False
             return
             
@@ -501,6 +740,9 @@ class ModelCheckApp(App):
             for future in asyncio.as_completed(tasks):
                 result = await future
                 
+                # Store full result
+                self.check_results[result.model_name] = result
+                
                 # Check status styling
                 status_style = "white"
                 if result.status == "Active":
@@ -518,13 +760,19 @@ class ModelCheckApp(App):
                 code_str = str(result.status_code) if result.status_code else "N/A"
                 latency_str = f"{result.latency_ms:.1f}" if result.latency_ms > 0 else "N/A"
                 
-                # Add row to table
+                # Truncate detail message for clean table layout
+                short_err = result.error_message or "Successfully responded"
+                if len(short_err) > 35:
+                    short_err = short_err[:32] + "..."
+                
+                # Add row to table (with specific key matching the model name)
                 self.results_table.add_row(
                     result.model_name,
                     status_style,
                     code_str,
                     latency_str,
-                    result.error_message
+                    short_err,
+                    key=result.model_name
                 )
                 
                 # Update progress bar
@@ -535,7 +783,20 @@ class ModelCheckApp(App):
 
         self.progress_label.update(f"[green]Completed testing all {len(models)} models![/green]")
         self.query_one("#lbl-key-status", Label).update(f"[green]Verification Finished. {active_count} active models.[/green]")
+        
+        # Set status to COMPLETE
+        self.status_indicator.update("STATUS: COMPLETE")
+        self.status_indicator.set_classes("status-complete")
+        
         self.testing_in_progress = False
+        
+        # Select first row by default to trigger details update
+        if models:
+            try:
+                self.results_table.move_cursor(row=0)
+                self.update_details_from_row(models[0])
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

@@ -23,8 +23,13 @@ For a complete breakdown of the code and instructions on how to test it, see the
   - **Quota Exhausted**: Key is valid but has insufficient credit or rate limit exhausted.
   - **Restricted (Free Tier)**: Identifies models requiring billing enabled or region upgrades.
   - **Unsupported/Inactive**: Model is deprecated or key has no permissions.
+- 🚦 **Dynamic Status Tag**: High-visibility status badge (`STATUS: IDLE`, `STATUS: TESTING`, `STATUS: COMPLETE`) changes color (gray, yellow, green) to clearly display current operations.
+- 📝 **Details Viewer Panel**: Long error messages are kept clean. Selecting or highlighting any tested model row dynamically displays its full raw API response/error in a dedicated scrollable panel at the bottom right.
+- 📋 **Copy & Export Functionality**:
+  - **Copy Active List** (`Ctrl + C`): Extracts and copies only successfully active models into a clean bulleted list (perfect to paste into coding agent instructions).
+  - **Export Report** (`Ctrl + E`): Exports a clean Markdown table of your full verification results to `wmd_results.md` (which is pre-ignored in `.gitignore`).
 - ⚡ **Concurrent Testing**: Utilizes asynchronous batch checking (`httpx`) to test multiple models in seconds without triggering rate limits.
-- 🔒 **Secure Local History**: Saves key history locally to `keys_history.json` (explicitly ignored by Git so it never leaks to GitHub). Keys are masked in dropdown selections (e.g. `AQ.Ab-xxxx...xxxx`) to prevent shoulder surfing.
+- 🔒 **Secure Local History**: Saves key history locally to `keys_history.json` (ignored by Git). Keys are masked in dropdown selections (e.g. `AQ.Ab-xxxx...xxxx`) to prevent screen leaks.
 - 🧪 **Mock Testing Mode**: Includes a built-in mock engine to explore all states without using real/paid API keys.
 
 ---

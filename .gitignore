@@ -18,3 +18,5 @@ Thumbs.db
 # Project Secrets / Configuration (CRITICAL)
 keys_history.json
 .env
+wmd_results.md
+wmd_results.pdf
